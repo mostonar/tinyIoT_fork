@@ -202,22 +202,24 @@ RTNode *find_csr_rtnode_by_uri(char *uri)
         target_uri = strdup(uri);
         ptr = strtok_r(target_uri + 1, "/", &uriPtr);
     } else if (RAT == ABSOLUTE) {
-        // check if the uri is absolute and starts with the local CSE SP ID
-        if (isSPIDLocal(target_uri)) {
-            ptr = strchr(uri + 2, '/');
-            target_uri = strdup(ptr);
+        char *cse = strchr(uri + 2, '/');
+        if (!cse)
+            return NULL;
+        if (isSPIDLocal(uri)) {
+            target_uri = strdup(cse);
             ptr = strtok_r(target_uri + 1, "/", &uriPtr);
         } else {
             target_uri = strdup(uri);
-            ptr = strchr(target_uri+2, '/');
-            ptr = strtok_r(ptr+1, "/", &uriPtr);
+            ptr = strtok_r(target_uri + (cse - uri) + 1, "/", &uriPtr);
         }
     } else {
-        free(target_uri);
         return NULL;
     }
     if (!ptr)
+    {
+        free(target_uri);
         return NULL;
+    }
 
     NodeList *csrlist = rt->csr_list;
 

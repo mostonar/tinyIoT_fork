@@ -1606,6 +1606,48 @@ int check_privilege(oneM2MPrimitive* o2pt, RTNode* rtnode, ACOP acop)
 	return deny_privilege(o2pt);
 }
 
+/**
+ * @brief Resolve an acpi entry to the resource it references. An ACP hosted on
+ *        another CSE is RETRIEVEd from there with this CSE's CSE-ID as the
+ *        originator (reading an ACP is governed by its pvs, which the actual
+ *        requester usually does not hold).
+ * @param is_remote out: true if the node was fetched remotely; the caller must
+ *        free_rtnode() it after use
+ * @return resource node (caller checks ty), or NULL if not found / unreachable
+ */
+RTNode* resolve_acpi(char* acpi, bool* is_remote)
+{
+	*is_remote = false;
+	if (!acpi)
+		return NULL;
+
+	char* addr = acpi;
+	if (checkResourceAddressingType(acpi) == ABSOLUTE && isSPIDLocal(acpi))
+	{
+		// within our SP: "//<SP-ID>/<CSE-ID>/..." -> "/<CSE-ID>/..."
+		if (!(addr = strchr(acpi + 2, '/')))
+			return NULL;
+	}
+	// another SP's absolute address stays as is and is routed like any remote one
+
+	if (addr[0] != '/')
+		return find_rtnode(addr);
+
+	if (isSpRelativeLocal(addr))
+	{
+		// "/<our CSE-ID>/<rest>": find_rtnode() only takes CSE-relative addresses
+		char* rest = strchr(addr + 1, '/');
+		return rest ? find_rtnode(rest + 1) : NULL;
+	}
+
+	int rsc = 0;
+	RTNode* acp = get_remote_resource(addr, "/" CSE_BASE_RI, &rsc);
+	if (!acp)
+		logger("UTIL", LOG_LEVEL_DEBUG, "remote acp %s not retrieved (rsc %d)", addr, rsc);
+	*is_remote = (acp != NULL);
+	return acp;
+}
+
 static int get_acop_from_acpi_list(oneM2MPrimitive* o2pt, char* origin, cJSON* acpi_list)
 {
 	int acop = 0;
@@ -1623,11 +1665,14 @@ static int get_acop_from_acpi_list(oneM2MPrimitive* o2pt, char* origin, cJSON* a
 			continue;
 		}
 
-		RTNode* acp = find_rtnode(acpi->valuestring);
+		bool is_remote = false;
+		RTNode* acp = resolve_acpi(acpi->valuestring, &is_remote);
 		if (acp && acp->ty == RT_ACP)
 		{
 			acop = (acop | get_acop_origin(o2pt, origin, acp, 0));
 		}
+		if (is_remote)
+			free_rtnode(acp);
 	}
 
 	return acop;
@@ -1676,7 +1721,6 @@ int check_macp_privilege(oneM2MPrimitive* o2pt, RTNode* rtnode, ACOP acop)
 int get_acop(oneM2MPrimitive* o2pt, char* corigin, RTNode* rtnode)
 {
 	int acop = 0;
-	int valid_flag = 0;
 
 #ifdef ADMIN_AE_ID
 	if (!strcmp(corigin, ADMIN_AE_ID))
@@ -1691,9 +1735,14 @@ int get_acop(oneM2MPrimitive* o2pt, char* corigin, RTNode* rtnode)
 		return acop;
 	}
 
+	/*
+	 * TS-0001 (R3+): the default access policy applies only when acpi is not
+	 * set, and that case is handled by check_privilege(). An acpi whose ACPs are
+	 * all invalid or unreachable grants nothing.
+	 */
 	cJSON* acpiArr = get_acpi_rtnode(rtnode);
 	if (!acpiArr)
-		return DEFAULT_ACOP;
+		return 0;
 	logger("UTIL", LOG_LEVEL_DEBUG, "get_acop : %s", rtnode->uri);
 
 	cJSON* acpi = NULL;
@@ -1703,20 +1752,17 @@ int get_acop(oneM2MPrimitive* o2pt, char* corigin, RTNode* rtnode)
 		{
 			continue;
 		}
-		RTNode* acp = find_rtnode(acpi->valuestring);
+		bool is_remote = false;
+		RTNode* acp = resolve_acpi(acpi->valuestring, &is_remote);
 		if (acp && acp->ty == RT_ACP)
 		{
 			acop = (acop | get_acop_origin(o2pt, corigin, acp, 0));
-			valid_flag = 1;
 		}
-	}
-	
-	if (valid_flag) {
-		return acop;
-	} else {
-		return DEFAULT_ACOP;
+		if (is_remote)
+			free_rtnode(acp);
 	}
 
+	return acop;
 }
 
 int get_acop_macp(oneM2MPrimitive* o2pt, RTNode* rtnode)
@@ -1943,8 +1989,11 @@ int has_privilege(oneM2MPrimitive* o2pt, char* acpi, ACOP acop)
 	if (!acpi)
 		return 1;
 
-	RTNode* acp = find_rtnode(acpi);
+	bool is_remote = false;
+	RTNode* acp = resolve_acpi(acpi, &is_remote);
 	int result = get_acop_origin(o2pt, origin, acp, 0);
+	if (is_remote)
+		free_rtnode(acp);
 	if ((result & acop) == acop)
 	{
 		return 1;
@@ -1997,13 +2046,11 @@ int check_acpi_update_privilege(oneM2MPrimitive* o2pt, RTNode* target_rtnode)
 			continue;
 		}
 
-		RTNode* acp = find_rtnode(acpi->valuestring);
-		if (!acp || acp->ty != RT_ACP)
-		{
-			continue;
-		}
-
-		int pvs_acop = get_acop_origin(o2pt, origin, acp, 1);
+		bool is_remote = false;
+		RTNode* acp = resolve_acpi(acpi->valuestring, &is_remote);
+		int pvs_acop = (acp && acp->ty == RT_ACP) ? get_acop_origin(o2pt, origin, acp, 1) : 0;
+		if (is_remote)
+			free_rtnode(acp);
 		if ((pvs_acop & ACOP_UPDATE) == ACOP_UPDATE)
 		{
 			return 0;
@@ -4264,12 +4311,16 @@ int validate_acpi(oneM2MPrimitive* o2pt, cJSON* acpiAttr, Operation op)
 			return handle_error(o2pt, RSC_BAD_REQUEST, "attribute `acpi` contains an invalid resource identifier");
 		}
 
-		RTNode* acp = find_rtnode(acpi->valuestring);
+		bool is_remote = false;
+		RTNode* acp = resolve_acpi(acpi->valuestring, &is_remote);
 		if (!acp)
 		{
 			return handle_error(o2pt, RSC_BAD_REQUEST, "resource `acp` is not found");
 		}
-		if (acp->ty != RT_ACP)
+		ResourceType acp_ty = acp->ty;
+		if (is_remote)
+			free_rtnode(acp);
+		if (acp_ty != RT_ACP)
 		{
 			return handle_error(o2pt, RSC_BAD_REQUEST, "attribute `acpi` does not reference an accessControlPolicy resource");
 		}
