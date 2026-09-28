@@ -101,6 +101,13 @@ int update_annc(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
     }
     else
     {
+        // announcementSyncType (bi-directional update through the annc) exists from R4
+#if CSE_RVI >= RVI_4
+        if (o2pt->rvi < RVI_4)
+        {
+            return handle_error(o2pt, RSC_OPERATION_NOT_ALLOWED, "update through announced resource requires R4");
+        }
+
         cJSON *ast = cJSON_GetObjectItem(target_rtnode->obj, "ast");
         if (ast)
         {
@@ -135,6 +142,9 @@ int update_annc(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
         {
             return handle_error(o2pt, RSC_BAD_REQUEST, "resource is uni-directional");
         }
+#else
+        return handle_error(o2pt, RSC_OPERATION_NOT_ALLOWED, "update through announced resource requires R4");
+#endif
     }
 
     int result = 0;

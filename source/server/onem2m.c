@@ -1186,20 +1186,19 @@ int update_onem2m_resource(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
 		rsc = handle_error(o2pt, RSC_OPERATION_NOT_ALLOWED, "operation `update` for tsi is not allowed");
 		break;
 
-// bi-directional update can be used for annc resources (RVI >= 4)
-#if CSE_RVI >= RVI_4
+	// sync from the original's Hosting CSE on every release; update_annc() limits
+	// bi-directional updates (from anyone else) to R4
 	case RT_ACPA:
 	case RT_CBA:
+	case RT_CSRA:
 	case RT_AEA:
 	case RT_CNTA:
 	case RT_CINA:
 	case RT_GRPA:
 	case RT_TSA:
-		if (o2pt->rvi >= RVI_4) {
-			rsc = update_annc(o2pt, target_rtnode);
-			break;
-		}
-#endif
+	case RT_FCNTA:
+		rsc = update_annc(o2pt, target_rtnode);
+		break;
 
 	default:
 		handle_error(o2pt, RSC_OPERATION_NOT_ALLOWED, "operation `update` is unsupported");

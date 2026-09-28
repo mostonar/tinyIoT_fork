@@ -51,16 +51,16 @@ typedef enum
 	SORT_ASC = 2
 } SORT;
 
-typedef enum
-{
-	RVI_NONE,
-	RVI_1,
-	RVI_2,
-	RVI_2a,
-	RVI_3,
-	RVI_4,
-	RVI_5,
-} RVI;
+// Macros rather than an enum so that `#if CSE_RVI >= RVI_x` compares real
+// values: the preprocessor treats enum constants as 0.
+#define RVI_NONE 0
+#define RVI_1 1
+#define RVI_2 2
+#define RVI_2a 3
+#define RVI_3 4
+#define RVI_4 5
+#define RVI_5 6
+typedef int RVI;
 
 typedef enum
 {
