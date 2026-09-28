@@ -2925,6 +2925,35 @@ bool isSpRelativeLocal(char* address)
 	return strcmp(cseid, CSE_BASE_RI) == 0 || strcmp(cseid, CSE_BASE_NAME) == 0;
 }
 
+/**
+ * @brief Convert an address of a resource hosted here to SP-relative form, so a
+ *        remote CSE resolves it against this CSE instead of its own tree.
+ *        CSE-relative gets our CSE-ID prefixed, absolute within our SP drops the
+ *        SP-ID; SP-relative and other-SP absolute addresses are returned as is.
+ * @return heap-allocated address (caller frees), or NULL if `address` is NULL
+ */
+char* toSpRelative(char* address)
+{
+	if (!address) return NULL;
+
+	char buf[1024];
+	switch (checkResourceAddressingType(address))
+	{
+	case CSE_RELATIVE:
+		snprintf(buf, sizeof(buf), "/%s/%s", CSE_BASE_RI, address);
+		return strdup(buf);
+	case ABSOLUTE:
+		if (isSPIDLocal(address))
+		{
+			char* cse = strchr(address + 2, '/');
+			if (cse) return strdup(cse);
+		}
+		return strdup(address);
+	default:
+		return strdup(address);
+	}
+}
+
 int rsc_to_http_status(int rsc, char** msg)
 {
 	switch (rsc)
@@ -4807,6 +4836,19 @@ int create_remote_cba(char* poa, char** cbA_url)
 		cJSON_AddItemToObject(cba, "lnk", cJSON_CreateString("/" CSE_BASE_RI "/" CSE_BASE_NAME));
 		cJSON* srv = cJSON_Duplicate(cJSON_GetObjectItem(rt->cb->obj, "srv"), true);
 		cJSON_AddItemToObject(cba, "srv", srv);
+		// the cbA lives on the remote CSE: acpi must point back to the ACPs hosted here
+		cJSON* cb_acpi = NULL;
+		cJSON_ArrayForEach(cb_acpi, cJSON_GetObjectItem(rt->cb->obj, "acpi"))
+		{
+			char* sp = cJSON_IsString(cb_acpi) ? toSpRelative(cb_acpi->valuestring) : NULL;
+			if (!sp)
+				continue;
+			cJSON* acpi = cJSON_GetObjectItem(cba, "acpi");
+			if (!acpi)
+				acpi = cJSON_AddArrayToObject(cba, "acpi");
+			cJSON_AddItemToArray(acpi, cJSON_CreateString(sp));
+			free(sp);
+		}
 		char* cba_et = get_local_time(DEFAULT_EXPIRE_TIME);
 		cJSON_AddStringToObject(cba, "et", cba_et);
 		free(cba_et);
@@ -5446,7 +5488,18 @@ int build_annc_attrs(cJSON *dst, cJSON *src, ResourceType ty)
 	for (int i = 0; ma && ma[i]; i++)
 		annc_copy(dst, src, ma[i]);
 
+	// the annc lives on the remote CSE: acpi must point back to the ACPs hosted here
 	cJSON *a;
+	cJSON_ArrayForEach(a, cJSON_GetObjectItem(dst, "acpi"))
+	{
+		char *sp = cJSON_IsString(a) ? toSpRelative(a->valuestring) : NULL;
+		if (sp)
+		{
+			cJSON_SetValuestring(a, sp);
+			free(sp);
+		}
+	}
+
 	cJSON_ArrayForEach(a, cJSON_GetObjectItem(src, "aa"))
 	{
 		if (cJSON_IsString(a) && a->valuestring && annc_attr_is_oa(ty, a->valuestring))
@@ -5547,6 +5600,17 @@ void announce_to_annc(oneM2MPrimitive *o2pt, RTNode *target_rtnode, cJSON *prev_
 		if (cJSON_getArrayIdx(new_aa, it->valuestring) != -1) continue; // still announced
 		if (cJSON_GetObjectItem(resource, it->valuestring)) continue;
 		cJSON_AddItemToObject(resource, it->valuestring, cJSON_CreateNull());
+	}
+
+	// the annc lives on the remote CSE: acpi must point back to the ACPs hosted here
+	cJSON_ArrayForEach(it, cJSON_GetObjectItem(resource, "acpi"))
+	{
+		char *sp = cJSON_IsString(it) ? toSpRelative(it->valuestring) : NULL;
+		if (sp)
+		{
+			cJSON_SetValuestring(it, sp);
+			free(sp);
+		}
 	}
 
 	if (cJSON_GetArraySize(resource) == 0)

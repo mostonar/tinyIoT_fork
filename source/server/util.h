@@ -36,6 +36,7 @@ cJSON* getNoPermAcopDiscovery(oneM2MPrimitive* o2pt, RTNode* rtnode, ACOP acop);
 ResourceAddressingType checkResourceAddressingType(char* uri);
 bool isSPIDLocal(char* address);
 bool isSpRelativeLocal(char* address);
+char* toSpRelative(char* address);
 
 // Remote-CSE
 int register_remote_cse();
