@@ -107,9 +107,8 @@ int create_ts(oneM2MPrimitive *o2pt, RTNode *parent_rtnode) {
         cJSON_Delete(root); return handle_error(o2pt, RSC_BAD_REQUEST, "peid > pei/2");
     }
 
-#if CSE_RVI >= RVI_3
     cJSON *final_at = cJSON_CreateArray();
-    if (handle_annc_create(parent_rtnode, ts, cJSON_GetObjectItem(ts, "at"), final_at) == -1)
+    if (handle_annc_create(o2pt, parent_rtnode, ts, cJSON_GetObjectItem(ts, "at"), final_at) == -1)
     {
         cJSON_Delete(root);
         cJSON_Delete(final_at);
@@ -126,7 +125,6 @@ int create_ts(oneM2MPrimitive *o2pt, RTNode *parent_rtnode) {
         cJSON_Delete(final_at);
         cJSON_DeleteItemFromObject(ts, "at");
     }
-#endif
 
     char ptr[1024];
     sprintf(ptr, "%s/%s", get_uri_rtnode(parent_rtnode), cJSON_GetObjectItem(ts, "rn")->valuestring);
@@ -282,11 +280,9 @@ int update_ts(oneM2MPrimitive *o2pt, RTNode *target_rtnode) {
         free(now);
     }
 
-#if CSE_RVI >= RVI_3
     // Shared with every other announceable resource rather than inlined here:
     // this copy also had no handling for `at: null` (de-announce everything).
-    process_annc_at_update(target_rtnode, ts);
-#endif
+    process_annc_at_update(o2pt, target_rtnode, ts);
 
     update_resource(target_rtnode->obj, ts);
     cJSON *cni = cJSON_GetObjectItem(target_rtnode->obj, "cni");

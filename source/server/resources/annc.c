@@ -21,6 +21,8 @@ int create_annc(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         break;
     case RT_CBA:
         break;
+    case RT_CSRA:
+        break;
     case RT_CNTA:
         break;
     case RT_GRPA:

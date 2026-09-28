@@ -930,6 +930,7 @@ int create_onem2m_resource(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
 	case RT_ACPA:
 	case RT_AEA:
 	case RT_CBA:
+	case RT_CSRA:
 	case RT_CNTA:
 	case RT_CINA:
 	case RT_GRPA:
@@ -1118,10 +1119,8 @@ int update_onem2m_resource(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
 		return handle_error(o2pt, RSC_BAD_REQUEST, "attribute `et` is invalid");
 	}
 
-#if CSE_RVI >= RVI_3
 	cJSON *prev_aa = cJSON_Duplicate(cJSON_GetObjectItem(target_rtnode->obj, "aa"), 1);
 	cJSON *upd_body_snap = cJSON_Duplicate(getResource(o2pt->request_pc, target_rtnode->ty), 1);
-#endif
 
 	switch (ty)
 	{
@@ -1187,7 +1186,8 @@ int update_onem2m_resource(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
 		rsc = handle_error(o2pt, RSC_OPERATION_NOT_ALLOWED, "operation `update` for tsi is not allowed");
 		break;
 
-#if CSE_RVI >= RVI_3
+// bi-directional update can be used for annc resources (RVI >= 4)
+#if CSE_RVI >= RVI_4
 	case RT_ACPA:
 	case RT_CBA:
 	case RT_AEA:
@@ -1195,20 +1195,20 @@ int update_onem2m_resource(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
 	case RT_CINA:
 	case RT_GRPA:
 	case RT_TSA:
-		rsc = update_annc(o2pt, target_rtnode);
-		break;
+		if (o2pt->rvi >= RVI_4) {
+			rsc = update_annc(o2pt, target_rtnode);
+			break;
+		}
 #endif
 
 	default:
 		handle_error(o2pt, RSC_OPERATION_NOT_ALLOWED, "operation `update` is unsupported");
 		rsc = o2pt->rsc;
 	}
-#if CSE_RVI >= RVI_3
 	if (rsc < RSC_BAD_REQUEST)
 		announce_to_annc(o2pt, target_rtnode, prev_aa, upd_body_snap);
 	cJSON_Delete(prev_aa);
 	cJSON_Delete(upd_body_snap);
-#endif
 	return rsc;
 }
 
@@ -1827,27 +1827,52 @@ int notify_via_sub(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
 }
 
 /**
+ * @brief Remove the `at` entry (if any) matching `csi` from `resource_obj`.
+ *        Used to drop a cached announce target once it is known to be stale.
+ */
+static void remove_at_entry_for_csi(cJSON *resource_obj, const char *csi)
+{
+	cJSON *at = cJSON_GetObjectItem(resource_obj, "at");
+	if (!at)
+		return;
+	size_t csi_len = strlen(csi);
+	cJSON *item = NULL;
+	cJSON_ArrayForEach(item, at)
+	{
+		if (cJSON_IsString(item) && item->valuestring &&
+			!strncmp(item->valuestring, csi, csi_len) && item->valuestring[csi_len] == '/')
+		{
+			cJSON_DetachItemViaPointer(at, item);
+			cJSON_Delete(item);
+			break;
+		}
+	}
+}
+
+/**
  * creating remote annc
  * @param parent_rtnode parent resource node
  * @param obj resource object
  * @param at announceTo string
- * @param isParent true if parent resource is parent resource
- */
-char *create_remote_annc(RTNode *parent_rtnode, cJSON *obj, char *at)
+ *
+ * */
+char *create_remote_annc(oneM2MPrimitive *o2pt, RTNode *parent_rtnode, cJSON *obj, char *at)
 {
-	extern cJSON *ATTRIBUTES;
 	char buf[256] = {0};
-	
-	// bool pannc = false;
-	// Check Parent Resource has attribute at
-	// cJSON *pat = cJSON_GetObjectItem(parent_rtnode->obj, "at");
-	// pannc = false;
-	// cJSON *pjson = NULL;
+
 	int ty = cJSON_GetObjectItem(obj, "ty")->valueint;
 	ResourceAddressingType RAT = checkResourceAddressingType(at);
-	RTNode *parent_rtnode_l = parent_rtnode;
 	char *parent_target = NULL;
-	char *csi = NULL;
+	char *target_csi = NULL;
+	RTNode *anchor_rtnode = NULL;
+	bool target_from_cache = false;
+	int (*create_base)(char *, char **) = NULL;
+#if CSE_RVI < RVI_3
+	create_base = create_remote_csra;
+#endif
+#if CSE_RVI >= RVI_3
+	create_base = o2pt->rvi >= RVI_3 ? create_remote_cba : create_remote_csra;
+#endif
 
 	// check trail slash
 	if (at[strlen(at) - 1] == '/')
@@ -1856,136 +1881,262 @@ char *create_remote_annc(RTNode *parent_rtnode, cJSON *obj, char *at)
 	}
 
 	// Check uri or csi
-	if (RAT == ABSOLUTE) {  
+	if (RAT == ABSOLUTE) {
 		char *ptr = strchr(at+2, '/');
 		ptr = strchr(ptr+1,'/');
 		if (ptr) {
 			parent_target = strdup(at);
-			csi = strdup(at);
-			strtok_r(csi+2, "/", &ptr);
+			target_csi = strdup(at);
+			strtok_r(target_csi+2, "/", &ptr);
 		} else if (isSPIDLocal(at)) {
-			csi = strdup(strchr(at+2, '/'));
+			target_csi = strdup(strchr(at+2, '/'));
 		} else {
-			csi = strdup(at);
+			target_csi = strdup(at);
 		}
 	} else if(RAT == SP_RELATIVE) {
-		csi = strdup(at);
+		target_csi = strdup(at);
 		char *ptr = strchr(at+1, '/');
 		if (ptr) {
 			parent_target = strdup(at);
-			strtok_r(csi+1, "/", &ptr);
+			strtok_r(target_csi+1, "/", &ptr);
 		}
 	} else {
 		return NULL;
 	}
 
-	if (parent_target == NULL && parent_rtnode_l == rt->cb)
+	if (RAT != SP_RELATIVE)
 	{
-		if (create_remote_cba(csi, &parent_target) == -1)
-		{
-			logger("UTIL", LOG_LEVEL_ERROR, "cbA can't create");
-			free(csi);
-			return NULL;
-		}
+		// ABSOLUTE targets are addressed by the caller directly; no cache/repair applies.
+		free(parent_target);
+		free(target_csi);
+		return NULL;
 	}
-	else if (parent_target == NULL)
+
+	// R2 only: announcing a <remoteCSE> itself skips the base lookup. create_remote_csra()
+	// announces a <remoteCSE> (through the neighbor), so looking up a base here would recurse.
+	if (parent_target == NULL && ty == RT_CSR && create_base == create_remote_csra)
+	{
+		char to[512];
+		snprintf(to, sizeof(to), "%s/-", target_csi);
+		parent_target = strdup(to);
+	}
+
+	// at is csi
+	if (parent_target == NULL)
 	{
 		// check parent resource has announced
 		cJSON *pjson = NULL;
-		cJSON *pat = cJSON_GetObjectItem(parent_rtnode_l->obj, "at");
+		cJSON *pat = cJSON_GetObjectItem(parent_rtnode->obj, "at");
 		cJSON_ArrayForEach(pjson, pat)
 		{
-			if (!strncmp(pjson->valuestring, csi, strlen(csi)) && pjson->valuestring[strlen(csi)] == '/')
+			if (!strncmp(pjson->valuestring, target_csi, strlen(target_csi)) && pjson->valuestring[strlen(target_csi)] == '/')
 			{
 				parent_target = strdup(pjson->valuestring);
+				anchor_rtnode = parent_rtnode;
+				target_from_cache = true;
 				break;
 			}
 		}
+		// if parent resource has not announced, and parent resource is cb, then create the base.
+		if (parent_target == NULL && parent_rtnode == rt->cb) {
+			if (create_base(target_csi, &parent_target) == -1)
+			{
+				logger("UTIL", LOG_LEVEL_ERROR, "annc base can't create");
+				free(target_csi);
+				return NULL;
+			}
+			anchor_rtnode = rt->cb;
+		}
 	}
 
+	// at is csi and parent has not announced
 	if (parent_target == NULL)
-	{ // if parent resource has no attribute at
+	{
 		// if obj is CIN, TSI, FCIN, then need to announce parent resource first
 		if (ty == RT_CIN || ty == RT_TSI || ty == RT_FCIN)
 		{
 			logger("UTIL", LOG_LEVEL_DEBUG, "can't create annc for CIN, TSI, FCIN without parent resource announced");
-			free(csi);
+			free(target_csi);
 			return NULL;
 		}
-		
-		logger("UTIL", LOG_LEVEL_DEBUG, "Creating cbA");
-		if (create_remote_cba(csi, &parent_target) == -1)
+
+		// check the base has been announced
+		cJSON *pjson = NULL;
+		cJSON *cat = cJSON_GetObjectItem(rt->cb->obj, "at");
+		cJSON_ArrayForEach(pjson, cat)
 		{
-			logger("UTIL", LOG_LEVEL_ERROR, "cbA can't create");
-			free(csi);
-			return NULL;
+			if (!strncmp(pjson->valuestring, target_csi, strlen(target_csi)) && pjson->valuestring[strlen(target_csi)] == '/')
+			{
+				parent_target = strdup(pjson->valuestring);
+				anchor_rtnode = rt->cb;
+				target_from_cache = true;
+				break;
+			}
 		}
-		parent_rtnode_l = rt->cb;
+
+		if (parent_target == NULL) {
+			if (create_base(target_csi, &parent_target) == -1)
+			{
+				logger("UTIL", LOG_LEVEL_ERROR, "annc base can't create");
+				free(target_csi);
+				return NULL;
+			}
+			anchor_rtnode = rt->cb;
+		}
 	}
 
-	
-	if (RAT == SP_RELATIVE)
+	RTNode *csr = find_csr_rtnode_by_uri(at);
+	if (!csr)
 	{
-		oneM2MPrimitive *o2pt = (oneM2MPrimitive *)calloc(sizeof(oneM2MPrimitive), 1);
-		o2pt->fr = strdup("/" CSE_BASE_RI);
-		o2pt->to = strdup(parent_target);
-		o2pt->op = OP_CREATE;
-		o2pt->ty = ty + 10000;
-		o2pt->rqi = strdup("create-annc");
-		o2pt->rvi = CSE_RVI;
-		
+		logger("UTIL", LOG_LEVEL_ERROR, "at target not found");
+		free(parent_target);
+		free(target_csi);
+		return NULL;
+	}
+
+	char *result = NULL;
+	bool repair_attempted = false;
+
+	for (;;)
+	{
+		oneM2MPrimitive *annc_o2pt = (oneM2MPrimitive *)calloc(sizeof(oneM2MPrimitive), 1);
+		annc_o2pt->fr = strdup("/" CSE_BASE_RI);
+		annc_o2pt->to = strdup(parent_target);
+		annc_o2pt->op = OP_CREATE;
+		annc_o2pt->ty = ty + 10000;
+		annc_o2pt->rqi = strdup("create-annc");
+		annc_o2pt->rvi = CSE_RVI;
+
 		cJSON *root = cJSON_CreateObject();
 		cJSON *annc = cJSON_CreateObject();
-		cJSON *pjson = NULL;
 		cJSON_AddItemToObject(root, get_resource_key(ty + 10000), annc);
 		sprintf(buf, "/%s/%s/%s", CSE_BASE_RI, parent_rtnode->uri, cJSON_GetObjectItem(obj, "rn")->valuestring);
 		cJSON_AddItemToObject(annc, "lnk", cJSON_CreateString(buf));
-		
+
 		// Mandatory-Announced + Optionally-Announced (aa) attributes.
 		if (build_annc_attrs(annc, obj, ty) != 0)
 		{
 			logger("UTIL", LOG_LEVEL_ERROR, "invalid attribute in aa");
-			free_o2pt(o2pt);
+			free_o2pt(annc_o2pt);
 			cJSON_Delete(root);
-			free(parent_target);
-			free(csi);
-			return NULL;
+			break;
 		}
 
-		o2pt->request_pc = root;
-		o2pt->isForwarding = true;
-		RTNode *rtnode = find_csr_rtnode_by_uri(at);
-		if (!rtnode)
+		// announcementSyncType (ast) is an R4 attribute: never announce it below R4
+		bool annc_ast = false;
+#if CSE_RVI >= RVI_4
+		annc_ast = (o2pt->rvi >= RVI_4);
+#endif
+		if (!annc_ast)
+			cJSON_DeleteItemFromObject(annc, "ast");
+
+		annc_o2pt->request_pc = root;
+		annc_o2pt->isForwarding = true;
+		int rsc = forwarding_onem2m_resource(annc_o2pt, csr);
+
+		if (rsc < 4000)
 		{
-			logger("UTIL", LOG_LEVEL_ERROR, "at target not found");
-			free_o2pt(o2pt);
-			free(parent_target);
-			free(csi);
-			return NULL;
+			cJSON *annc_obj = cJSON_GetObjectItem(annc_o2pt->response_pc, get_resource_key(ty + 10000));
+			char *annc_ri = cJSON_GetObjectItem(annc_obj, "ri")->valuestring;
+			char out_buf[256];
+			snprintf(out_buf, sizeof(out_buf), "%s/%s", target_csi, annc_ri);
+			result = strdup(out_buf);
+			free_o2pt(annc_o2pt);
+			break;
 		}
-		int rsc = 0;
-		if ((rsc = forwarding_onem2m_resource(o2pt, rtnode)) >= 4000)
+
+		/*
+		*	Todo: Implement conflict resolution logic completly.
+		*	Currently, if a conflict occurs, we try to discover the existing resource by its lnk. (not using fc)
+		*/
+		if (rsc == RSC_CONFLICT)
 		{
-			free_o2pt(o2pt);
-			logger("UTIL", LOG_LEVEL_ERROR, "Creation failed");
-			free(parent_target);
-			free(csi);
-			return NULL;
+			char *existing_ri = discover_ri_by_lnk(csr, parent_target, ty + 10000, buf);
+			free_o2pt(annc_o2pt);
+			if (existing_ri)
+			{
+				char out_buf[256];
+				snprintf(out_buf, sizeof(out_buf), "%s/%s", target_csi, existing_ri);
+				result = strdup(out_buf);
+				free(existing_ri);
+			}
+			else
+			{
+				logger("UTIL", LOG_LEVEL_ERROR, "annc conflict but existing resource not found via discovery");
+			}
+			break;
 		}
-		
-		cJSON *result = o2pt->response_pc;
-		cJSON *annc_obj = cJSON_GetObjectItem(result, get_resource_key(ty + 10000));
-		char *annc_ri = cJSON_GetObjectItem(annc_obj, "ri")->valuestring;
-		sprintf(buf, "%s/%s", csi, annc_ri);
-		free_o2pt(o2pt);
-		free(parent_target);
-		free(csi);
-		
-		return strdup(buf);
+
+		if (rsc == RSC_NOT_FOUND && target_from_cache && !repair_attempted)
+		{
+			// The cached anchor target is stale (deleted remotely, cache desync, ...).
+			// Repair it and retry once.
+			repair_attempted = true;
+			free_o2pt(annc_o2pt);
+			free(parent_target);
+			parent_target = NULL;
+
+			if (anchor_rtnode == rt->cb)
+			{
+				remove_at_entry_for_csi(rt->cb->obj, target_csi);
+				db_update_resource(rt->cb->obj, CSE_BASE_RI, RT_CSE);
+				if (create_base(target_csi, &parent_target) == -1)
+				{
+					logger("UTIL", LOG_LEVEL_ERROR, "annc base repair failed");
+					break;
+				}
+				target_from_cache = false;
+				continue;
+			}
+
+			char *new_addr = create_remote_annc(o2pt, anchor_rtnode->parent, anchor_rtnode->obj, at);
+			if (new_addr)
+			{
+				remove_at_entry_for_csi(anchor_rtnode->obj, target_csi);
+				cJSON *anchor_at = cJSON_GetObjectItem(anchor_rtnode->obj, "at");
+				if (!anchor_at)
+				{
+					anchor_at = cJSON_CreateArray();
+					cJSON_AddItemToObject(anchor_rtnode->obj, "at", anchor_at);
+				}
+				cJSON_AddItemToArray(anchor_at, cJSON_CreateString(new_addr));
+				db_update_resource(anchor_rtnode->obj, get_ri_rtnode(anchor_rtnode), anchor_rtnode->ty);
+				parent_target = strdup(new_addr);
+				free(new_addr);
+				target_from_cache = false;
+				continue;
+			}
+
+			// Parent repair failed outright: the stale record is unrecoverable for
+			// this csi, so drop it. CIN/TSI/FCIN have no fallback (they require a
+			// real announced parent); everything else can attach directly under the base.
+			remove_at_entry_for_csi(anchor_rtnode->obj, target_csi);
+			db_update_resource(anchor_rtnode->obj, get_ri_rtnode(anchor_rtnode), anchor_rtnode->ty);
+
+			if (ty == RT_CIN || ty == RT_TSI || ty == RT_FCIN)
+			{
+				logger("UTIL", LOG_LEVEL_ERROR, "parent annc repair failed, no base fallback for this type");
+				break;
+			}
+
+			if (create_base(target_csi, &parent_target) == -1)
+			{
+				logger("UTIL", LOG_LEVEL_ERROR, "base fallback after repair failure also failed");
+				break;
+			}
+			anchor_rtnode = rt->cb;
+			target_from_cache = false;
+			continue;
+		}
+
+		logger("UTIL", LOG_LEVEL_ERROR, "Creation failed (rsc %d)", rsc);
+		free_o2pt(annc_o2pt);
+		break;
 	}
+
 	free(parent_target);
-	free(csi);
-	return NULL;
+	free(target_csi);
+	return result;
 }
 
 /**

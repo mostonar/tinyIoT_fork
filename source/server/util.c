@@ -180,6 +180,9 @@ ResourceType http_parse_object_type(header_t* headers)
 	case 10005:
 		ty = RT_CBA;
 		break;
+	case 10016:
+		ty = RT_CSRA;
+		break;
 	case 10009:
 		ty = RT_GRPA;
 		break;
@@ -348,6 +351,9 @@ char* get_resource_key(ResourceType ty)
 	case RT_CBA:
 		key = "m2m:cbA";
 		break;
+	case RT_CSRA:
+		key = "m2m:csrA";
+		break;
 	case RT_FCNTA:
 		key = "m2m:fcntA";
 		break;
@@ -409,6 +415,8 @@ ResourceType parse_object_type_cjson(cJSON* cjson)
 		ty = RT_CSR;
 	else if (cJSON_GetObjectItem(cjson, "m2m:cba"))
 		ty = RT_CBA;
+	else if (cJSON_GetObjectItem(cjson, "m2m:csra"))
+		ty = RT_CSRA;
 	else if (cJSON_GetObjectItem(cjson, "m2m:aea"))
 		ty = RT_AEA;
 	else if (cJSON_GetObjectItem(cjson, "m2m:cnta"))
@@ -496,6 +504,9 @@ char* resource_identifier(ResourceType ty, char* ct)
 		break;
 	case RT_CBA:
 		strcpy(ri, "10005-");
+		break;
+	case RT_CSRA:
+		strcpy(ri, "10016-");
 		break;
 	case RT_AEA:
 		strcpy(ri, "10002-");
@@ -1514,13 +1525,27 @@ int check_privilege(oneM2MPrimitive* o2pt, RTNode* rtnode, ACOP acop)
 	// Annc shortcut hosting -> remote
 	if (acop != ACOP_CREATE && rtnode->ty > 10000 && rtnode->ty < 20000) {
 		char *lnk = cJSON_GetObjectItem(rtnode->obj, "lnk")->valuestring;
-		if ((acop == ACOP_UPDATE || acop == ACOP_DELETE) && checkResourceCseID(lnk, o2pt->fr)) {
-			logger("UTIL", LOG_LEVEL_DEBUG, "originator is the cse of the owner of the resource");
-			return 0;
+		if (checkResourceCseID(lnk, o2pt->fr)) {
+			if (acop == ACOP_UPDATE || acop == ACOP_DELETE) {
+				logger("UTIL", LOG_LEVEL_DEBUG, "originator is the cse of the owner of the resource");
+				return 0;
+			}
+
+		} else {
+			if (acop == ACOP_DELETE) {
+				logger("UTIL", LOG_LEVEL_DEBUG, "originator is not the cse of the owner of the resource");
+				return deny_privilege(o2pt);
+			}
 		}
 	}
 
 	// Annc shortcut remote -> hosting
+	// remote cse already checked privielege of originator to access the <Annc> resource,
+	// and the <Annc> resource has same privilege as the original resource,
+	// so hosting cse can believe the remote cse's request and allow the remote cse to access the originar resource
+	// announcementSyncType (ast) exists from R4: only then may the remote CSE update through the annc
+#if CSE_RVI >= RVI_4
+	if (o2pt->rvi >= RVI_4)
 	{
 		cJSON *ast = cJSON_GetObjectItem(rtnode->obj, "ast");
 		if (ast) {
@@ -1537,6 +1562,7 @@ int check_privilege(oneM2MPrimitive* o2pt, RTNode* rtnode, ACOP acop)
 			}
 		} 
 	}
+#endif
 
 	/*
 	 * Resolve the effective policy before applying owner/creator defaults.
@@ -3345,6 +3371,8 @@ cJSON* getResource(cJSON* root, ResourceType ty)
 		return cJSON_GetObjectItem(root, "m2m:aeA");
 	case RT_CBA:
 		return cJSON_GetObjectItem(root, "m2m:cbA");
+	case RT_CSRA:
+		return cJSON_GetObjectItem(root, "m2m:csrA");
 	case RT_CINA:
 		return cJSON_GetObjectItem(root, "m2m:cinA");
 	case RT_CNTA:
@@ -4639,9 +4667,102 @@ static char* cba_url_from_response(const char* poa, cJSON* response_pc)
 }
 
 /**
+ * @brief Search a cJSON tree for an object whose string attribute `attr`
+ *        equals `value`.
+ */
+static cJSON* find_object_by_attr(cJSON* node, const char* attr, const char* value)
+{
+	if (!node)
+		return NULL;
+
+	if (cJSON_IsObject(node))
+	{
+		cJSON* a = cJSON_GetObjectItem(node, attr);
+		if (a && cJSON_IsString(a) && a->valuestring && !strcmp(a->valuestring, value))
+			return node;
+	}
+
+	if (cJSON_IsObject(node) || cJSON_IsArray(node))
+	{
+		cJSON* child = NULL;
+		cJSON_ArrayForEach(child, node)
+		{
+			cJSON* found = find_object_by_attr(child, attr, value);
+			if (found)
+				return found;
+		}
+	}
+	return NULL;
+}
+
+/**
+ * @brief Find, under `parent_uri` on a remote CSE, the child of type `ty`
+ *        whose attribute `attr` equals `value`. The remote CSE assigns its own
+ *        rn/ri, so an existing resource cannot be addressed deterministically;
+ *        it has to be discovered by an attribute whose value we know.
+ * @param csr CSR rtnode of the (next-hop) CSE to query through
+ * @param parent_uri SP-relative address of the parent to search under
+ * @param use_filter send `attr=value` as a filter criteria so the remote CSE returns only the match;
+ *        otherwise fetch every child of type `ty` and match `attr` here
+ * @return duplicate of the matching resource (caller cJSON_Delete()s it), or NULL
+ */
+cJSON* discover_resource_by_attr(RTNode* csr, const char* parent_uri, ResourceType ty, const char* attr, const char* value, bool use_filter)
+{
+	oneM2MPrimitive* o2pt = (oneM2MPrimitive*)calloc(1, sizeof(oneM2MPrimitive));
+	o2pt->fr = strdup("/" CSE_BASE_RI);
+	o2pt->to = strdup(parent_uri);
+	o2pt->op = OP_RETRIEVE;
+	o2pt->rqi = strdup("discover-attr");
+	o2pt->rvi = CSE_RVI;
+	o2pt->rcn = RCN_ATTRIBUTES_AND_CHILD_RESOURCES;
+	o2pt->rcn_explicit = true; // http_forwarding() only puts rcn on the wire when this is set
+	o2pt->fc = cJSON_CreateObject();
+	cJSON* ty_arr = cJSON_CreateArray();
+	cJSON_AddItemToArray(ty_arr, cJSON_CreateNumber(ty));
+	cJSON_AddItemToObject(o2pt->fc, "ty", ty_arr);
+	cJSON_AddNumberToObject(o2pt->fc, "lvl", 1);
+	if (use_filter)
+		cJSON_AddStringToObject(o2pt->fc, attr, value);
+
+	int rsc = forwarding_onem2m_resource(o2pt, csr);
+	cJSON* found = NULL;
+	if (rsc < 4000 && o2pt->response_pc)
+	{
+		cJSON* match = find_object_by_attr(o2pt->response_pc, attr, value);
+		if (match)
+			found = cJSON_Duplicate(match, true);
+	}
+	free_o2pt(o2pt);
+	return found;
+}
+
+/**
+ * @brief Recover the `ri` of a resource that already exists remotely (CREATE
+ *        returned CONFLICT); see discover_resource_by_attr().
+ * @return heap-allocated `ri` string, or NULL if not found / query failed
+ */
+char* discover_ri_by_lnk(RTNode* csr, const char* parent_uri, ResourceType ty, const char* lnk_value)
+{
+	cJSON* res = discover_resource_by_attr(csr, parent_uri, ty, "lnk", lnk_value, true);
+	if (!res)
+		return NULL;
+	cJSON* ri_json = cJSON_GetObjectItem(res, "ri");
+	char* ri = (ri_json && cJSON_IsString(ri_json) && ri_json->valuestring) ? strdup(ri_json->valuestring) : NULL;
+	cJSON_Delete(res);
+	return ri;
+}
+
+static const char* csr_csi(RTNode* csr)
+{
+	cJSON* csi = csr ? cJSON_GetObjectItem(csr->obj, "csi") : NULL;
+	return (csi && cJSON_IsString(csi)) ? csi->valuestring : NULL;
+}
+
+/**
  * @brief create remote cse
- * @param poa poa of remote cse(SP_RELATIVE)
- * @param cse_name name of remote cse
+ * @param poa csi of remote cse(SP_RELATIVE)
+ * @param cbA_url pointer to store the URL of the created cbA
+ * @return 0 if success, -1 if failed
  */
 int create_remote_cba(char* poa, char** cbA_url)
 {
@@ -4656,56 +4777,6 @@ int create_remote_cba(char* poa, char** cbA_url)
 	
 	char target_cb[512] = { 0 };
 	snprintf(target_cb, sizeof(target_cb), "%s/-", poa);
-	const char* cba_rn = CSE_BASE_RI "_cba";
-	
-	// Deterministic structured address of our <CSEBaseAnnc> under the target <CSEBase>.
-	char structured_buf[1024] = { 0 };
-	sprintf(structured_buf, "%s/%s", target_cb, cba_rn);
-
-	cJSON* stale_at_item = NULL;
-	{
-		cJSON* existing_at = cJSON_GetObjectItem(rt->cb->obj, "at");
-		cJSON* at_item = NULL;
-		size_t poa_len = strlen(poa);
-		cJSON_ArrayForEach(at_item, existing_at)
-		{
-			if (cJSON_IsString(at_item) && at_item->valuestring &&
-				!strncmp(at_item->valuestring, poa, poa_len) && at_item->valuestring[poa_len] == '/')
-			{
-				// Trust the cached `at` value; do not round-trip to the remote CSE.
-				*cbA_url = strdup(at_item->valuestring);
-				logger("UTIL", LOG_LEVEL_DEBUG, "cbA cached / target: %s", *cbA_url);
-				return 0;
-
-				// -- disabled: verify the cbA still exists remotely before reusing it --
-				// oneM2MPrimitive* vo2pt = (oneM2MPrimitive*)calloc(sizeof(oneM2MPrimitive), 1);
-				// vo2pt->fr = strdup("/" CSE_BASE_RI);
-				// vo2pt->to = strdup(structured_buf);   // stable rn-based address, not the cached ri
-				// vo2pt->op = OP_RETRIEVE;
-				// vo2pt->rqi = strdup("verify-cba");
-				// vo2pt->rvi = CSE_RVI;
-				// int vrsc = forwarding_onem2m_resource(vo2pt, csr);
-				//
-				// if (vrsc == RSC_OK)
-				// {
-				// 	char* alive_url = cba_url_from_response(poa, vo2pt->response_pc);
-				// 	free_o2pt(vo2pt);
-				// 	if (alive_url && !strcmp(alive_url, at_item->valuestring))
-				// 	{
-				// 		*cbA_url = alive_url;
-				// 		return 0;
-				// 	}
-				// 	if (alive_url)
-				// 		*cbA_url = alive_url;
-				// 	stale_at_item = at_item;
-				// 	break;
-				// }
-				// free_o2pt(vo2pt);
-				// stale_at_item = at_item;
-				// break;
-			}
-		}
-	}
 
 	if (!*cbA_url)
 	{
@@ -4718,7 +4789,7 @@ int create_remote_cba(char* poa, char** cbA_url)
 	{
 		oneM2MPrimitive* o2pt = (oneM2MPrimitive*)calloc(sizeof(oneM2MPrimitive), 1);
 		o2pt->fr = strdup("/" CSE_BASE_RI);
-		o2pt->to = strdup(target_cb); // using unstructured poa
+		o2pt->to = strdup(target_cb); // using structured poa
 		logger("UTIL", LOG_LEVEL_DEBUG, "create_remote_cba: %s", o2pt->to);
 		o2pt->op = OP_CREATE;
 		o2pt->ty = RT_CBA;
@@ -4743,16 +4814,30 @@ int create_remote_cba(char* poa, char** cbA_url)
 
 		o2pt->request_pc = root;
 		int crsc = forwarding_onem2m_resource(o2pt, csr);
-		if (crsc == RSC_CONFLICT)
-		{
-			// Already exists remotely; address it by its stable structured path.
-			logger("UTIL", LOG_LEVEL_DEBUG, "cbA already exists remotely, using structured address");
-			*cbA_url = strdup(structured_buf);
-		}
-		else if (crsc < 4000)
+		if (crsc < 4000)
 		{
 			// Newly created: store the address built from the ri the hosting CSE assigned.
 			*cbA_url = cba_url_from_response(poa, o2pt->response_pc);
+		}
+		else if (crsc == RSC_CONFLICT)
+		{
+			// Already exists remotely even though our local cache had nothing for
+			// this csi. We cannot guess its address (the remote assigns its own
+			// rn/ri), so discover it by the `lnk` value we just tried to create.
+			char* existing_ri = discover_ri_by_lnk(csr, target_cb, RT_CBA, "/" CSE_BASE_RI "/" CSE_BASE_NAME);
+			// # Todo: if request using structured lnk fails, should try to request using unstructured lnk
+			if (existing_ri)
+			{
+				char buf[1024] = { 0 };
+				snprintf(buf, sizeof(buf), "%s/%s", poa, existing_ri);
+				*cbA_url = strdup(buf);
+				free(existing_ri);
+				logger("UTIL", LOG_LEVEL_DEBUG, "cbA conflict; recovered via discovery: %s", *cbA_url);
+			}
+			else
+			{
+				logger("UTIL", LOG_LEVEL_ERROR, "cbA conflict but existing resource not found via discovery");
+			}
 		}
 		else
 		{
@@ -4781,18 +4866,213 @@ int create_remote_cba(char* poa, char** cbA_url)
 		at = cJSON_CreateArray();
 		cJSON_AddItemToObject(rt->cb->obj, "at", at);
 	}
-	if (stale_at_item)
-	{
-		cJSON_DetachItemViaPointer(at, stale_at_item);
-		cJSON_Delete(stale_at_item);
-	}
 	cJSON_AddItemToArray(at, cJSON_CreateString(*cbA_url));
 	db_update_resource(rt->cb->obj, CSE_BASE_RI, RT_CSE);
 	logger("UTIL", LOG_LEVEL_DEBUG, "cbA Created/ target: %s", *cbA_url);
 	return 0;
 }
 
-int handle_annc_create(RTNode* parent_rtnode, cJSON* resource_obj, cJSON* at_obj, cJSON* final_at)
+/**
+ * @brief UPDATE the announceTo of a neighbor-hosted <remoteCSE> (the one that
+ *        represents us). The neighbor treats it like any announceable resource
+ *        and (de)announces the <remoteCSE> to the listed CSEs.
+ * @param at_list full announceTo to set (an empty list is sent as null)
+ * @param resp_at out: duplicate of the `at` the neighbor answered with, or NULL
+ * @return response status code
+ */
+static int update_neighbor_csr_at(RTNode* nb, const char* csr_uri, cJSON* at_list, cJSON** resp_at)
+{
+	oneM2MPrimitive* o2pt = (oneM2MPrimitive*)calloc(1, sizeof(oneM2MPrimitive));
+	o2pt->fr = strdup("/" CSE_BASE_RI);
+	o2pt->to = strdup(csr_uri);
+	o2pt->op = OP_UPDATE;
+	o2pt->rqi = strdup("update-csr-at");
+	o2pt->rvi = CSE_RVI;
+
+	cJSON* root = cJSON_CreateObject();
+	cJSON* csr = cJSON_CreateObject();
+	cJSON_AddItemToObject(root, get_resource_key(RT_CSR), csr);
+	if (cJSON_GetArraySize(at_list) > 0)
+		cJSON_AddItemToObject(csr, "at", cJSON_Duplicate(at_list, true));
+	else
+		cJSON_AddItemToObject(csr, "at", cJSON_CreateNull());
+	o2pt->request_pc = root;
+
+	if (resp_at)
+		*resp_at = NULL;
+	int rsc = forwarding_onem2m_resource(o2pt, nb);
+	if (rsc < 4000 && resp_at && o2pt->response_pc)
+	{
+		cJSON* c = cJSON_GetObjectItem(o2pt->response_pc, get_resource_key(RT_CSR));
+		cJSON* a = c ? cJSON_GetObjectItem(c, "at") : NULL;
+		if (a && cJSON_IsArray(a))
+			*resp_at = cJSON_Duplicate(a, true);
+	}
+	free_o2pt(o2pt);
+	return rsc;
+}
+
+/**
+ * @brief R2 landing point (the R2 counterpart of create_remote_cba): find, or
+ *        make the neighbor create, the resource under which everything
+ *        announced to `target_csi` is placed. R2 has no <CSEBaseAnnc>, so:
+ *          1) target is directly connected (Registrar or Registree): reuse the
+ *             real <remoteCSE> that represents us on the target;
+ *          2) otherwise the target is reached through a neighbor (Registree if
+ *             the target is our descendant, else Registrar) that hosts a
+ *             <remoteCSE> representing us; if its announceTo already covers
+ *             the target (and that <remoteCSEAnnc> still exists), reuse it;
+ *          3) otherwise UPDATE that <remoteCSE>'s announceTo to add the target,
+ *             which makes the neighbor create the <remoteCSEAnnc>.
+ * @param target_csi csi of the CSE to announce to
+ * @param csrA_url pointer to store the "<csi>/<ri>" of the landing resource
+ * @return 0 if success, -1 if failed
+ */
+int create_remote_csra(char* target_csi, char** csrA_url)
+{
+	logger("UTIL", LOG_LEVEL_DEBUG, "create_remote_csra: %s", target_csi);
+	*csrA_url = NULL;
+
+	// Neighbor through which the target is reached, walking the registration graph:
+	// a Registree whose csi/dcse covers the target means the target is our
+	// descendant; otherwise the Registrar.
+	bool is_descendant = false;
+	RTNode* nb = NULL;
+	for (NodeList* l = rt->csr_list; l && !nb; l = l->next)
+	{
+		if (l->rtnode == rt->registrar_csr)
+			continue;
+		const char* csi = csr_csi(l->rtnode);
+		bool hit = csi && !strcmp(csi, target_csi);
+		cJSON* d = NULL;
+		cJSON_ArrayForEach(d, cJSON_GetObjectItem(l->rtnode->obj, "dcse"))
+		{
+			if (cJSON_IsString(d) && !strcmp(d->valuestring, target_csi))
+				hit = true;
+		}
+		if (hit)
+			nb = l->rtnode;
+	}
+	if (nb)
+		is_descendant = true;
+	else
+		nb = rt->registrar_csr;
+	const char* nb_csi = csr_csi(nb);
+	if (!nb || !nb_csi)
+	{
+		logger("UTIL", LOG_LEVEL_ERROR, "no neighbor CSE toward %s", target_csi);
+		return -1;
+	}
+	logger("UTIL", LOG_LEVEL_DEBUG, "landing toward %s via %s (%s)", target_csi, nb_csi,
+		   is_descendant ? "Registree: target is a descendant" : "Registrar");
+
+	const char* my_csi = "/" CSE_BASE_RI;
+	char nb_cb[512];
+	snprintf(nb_cb, sizeof(nb_cb), "%s/-", nb_csi);
+
+	// the <remoteCSE> hosted by the neighbor that represents us
+	cJSON* rcse = discover_resource_by_attr(nb, nb_cb, RT_CSR, "csi", my_csi, false); // no csi filter: not every CSE (tiny included) supports one
+	cJSON* ri_json = rcse ? cJSON_GetObjectItem(rcse, "ri") : NULL;
+	if (!ri_json || !cJSON_IsString(ri_json) || !ri_json->valuestring)
+	{
+		logger("UTIL", LOG_LEVEL_ERROR, "<remoteCSE> representing us not found on %s", nb_csi);
+		cJSON_Delete(rcse);
+		return -1;
+	}
+
+	char buf[1024];
+	// 1) directly connected: the <remoteCSE> itself is the landing point
+	if (!strcmp(nb_csi, target_csi))
+	{
+		snprintf(buf, sizeof(buf), "%s/%s", target_csi, ri_json->valuestring);
+		*csrA_url = strdup(buf);
+		cJSON_Delete(rcse);
+		return 0;
+	}
+
+	// 2) already self-announced toward the target?
+	cJSON* cur_at = cJSON_GetObjectItem(rcse, "at");
+	cJSON* e = NULL;
+	const char* hit = NULL;
+	cJSON_ArrayForEach(e, cur_at)
+	{
+		if (cJSON_IsString(e) && checkResourceCseID(e->valuestring, target_csi))
+		{
+			hit = e->valuestring;
+			break;
+		}
+	}
+	if (hit)
+	{
+		// the neighbor records it as announced; make sure it still exists
+		oneM2MPrimitive* vo = (oneM2MPrimitive*)calloc(1, sizeof(oneM2MPrimitive));
+		vo->fr = strdup(my_csi);
+		vo->to = strdup(hit);
+		vo->op = OP_RETRIEVE;
+		vo->rqi = strdup("verify-csra");
+		vo->rvi = CSE_RVI;
+		int vrsc = forwarding_onem2m_resource(vo, nb);
+		free_o2pt(vo);
+		if (vrsc < 4000)
+		{
+			*csrA_url = strdup(hit);
+			cJSON_Delete(rcse);
+			return 0;
+		}
+	}
+
+	// 3) announce the neighbor's <remoteCSE> to the target
+	char csr_uri[512];
+	snprintf(csr_uri, sizeof(csr_uri), "%s/%s", nb_csi, ri_json->valuestring);
+
+	cJSON* next_at = cJSON_CreateArray();
+	cJSON_ArrayForEach(e, cur_at)
+	{
+		if (cJSON_IsString(e) && e->valuestring && !(hit && !strcmp(e->valuestring, hit)))
+			cJSON_AddItemToArray(next_at, cJSON_CreateString(e->valuestring));
+	}
+
+	int result = -1;
+	cJSON* resp_at = NULL;
+	if (hit)
+	{
+		// stale record: let the neighbor drop it before announcing again
+		int drop_rsc = update_neighbor_csr_at(nb, csr_uri, next_at, NULL);
+		if (drop_rsc >= 4000)
+		{
+			logger("UTIL", LOG_LEVEL_ERROR, "dropping stale announcement toward %s failed (rsc %d)", target_csi, drop_rsc);
+			goto out;
+		}
+	}
+	cJSON_AddItemToArray(next_at, cJSON_CreateString(target_csi));
+	{
+		int rsc = update_neighbor_csr_at(nb, csr_uri, next_at, &resp_at);
+		const char* new_hit = NULL;
+		cJSON_ArrayForEach(e, resp_at)
+		{
+			if (rsc < 4000 && cJSON_IsString(e) && checkResourceCseID(e->valuestring, target_csi))
+			{
+				new_hit = e->valuestring;
+				break;
+			}
+		}
+		if (!new_hit)
+		{
+			logger("UTIL", LOG_LEVEL_ERROR, "self-announce toward %s via %s failed (rsc %d)", target_csi, nb_csi, rsc);
+			goto out;
+		}
+		*csrA_url = strdup(new_hit);
+		result = 0;
+	}
+
+out:
+	cJSON_Delete(resp_at);
+	cJSON_Delete(next_at);
+	cJSON_Delete(rcse);
+	return result;
+}
+
+int handle_annc_create(oneM2MPrimitive *o2pt, RTNode *parent_rtnode, cJSON *resource_obj, cJSON *at_obj, cJSON *final_at)
 {
 	if (!parent_rtnode)
 		return 1;
@@ -4804,7 +5084,7 @@ int handle_annc_create(RTNode* parent_rtnode, cJSON* resource_obj, cJSON* at_obj
 	char* at_str = NULL;
 	cJSON_ArrayForEach(at, cJSON_GetObjectItem(resource_obj, "at"))
 	{
-		at_str = create_remote_annc(parent_rtnode, resource_obj, at->valuestring);
+		at_str = create_remote_annc(o2pt, parent_rtnode, resource_obj, at->valuestring);
 		if (!at_str)
 		{
 			continue;
@@ -4815,7 +5095,7 @@ int handle_annc_create(RTNode* parent_rtnode, cJSON* resource_obj, cJSON* at_obj
 	return 0;
 }
 
-int handle_annc_update(RTNode* target_rtnode, cJSON* at_obj, cJSON* final_at)
+int handle_annc_update(oneM2MPrimitive *o2pt, RTNode *target_rtnode, cJSON *at_obj, cJSON *final_at)
 {
 	if (at_obj == NULL)
 		return 0;
@@ -4943,7 +5223,7 @@ int handle_annc_update(RTNode* target_rtnode, cJSON* at_obj, cJSON* final_at)
 		cJSON* pjson = NULL;
 		cJSON_ArrayForEach(pjson, register_at_list)
 		{
-			at_str = create_remote_annc(target_rtnode->parent, target_rtnode->obj, pjson->valuestring);
+			at_str = create_remote_annc(o2pt, target_rtnode->parent, target_rtnode->obj, pjson->valuestring);
 			if (!at_str)
 			{
 				continue;
@@ -4955,7 +5235,7 @@ int handle_annc_update(RTNode* target_rtnode, cJSON* at_obj, cJSON* final_at)
 	return 0;
 }
 
-void process_annc_at_update(RTNode *target_rtnode, cJSON *body)
+void process_annc_at_update(oneM2MPrimitive *o2pt, RTNode *target_rtnode, cJSON *body)
 {
 	cJSON *at = cJSON_GetObjectItem(body, "at");
 	if (!at)
@@ -4964,7 +5244,7 @@ void process_annc_at_update(RTNode *target_rtnode, cJSON *body)
 	if (cJSON_IsNull(at))
 	{
 		cJSON *kept = cJSON_CreateArray();
-		handle_annc_update(target_rtnode, at, kept);
+		handle_annc_update(o2pt, target_rtnode, at, kept);
 		if (cJSON_GetArraySize(kept) > 0)
 		{
 			cJSON_DeleteItemFromObject(body, "at");
@@ -4980,7 +5260,7 @@ void process_annc_at_update(RTNode *target_rtnode, cJSON *body)
 	}
 
 	cJSON *final_at = cJSON_CreateArray();
-	handle_annc_update(target_rtnode, at, final_at);
+	handle_annc_update(o2pt, target_rtnode, at, final_at);
 	cJSON_DeleteItemFromObject(body, "at");
 	if (cJSON_GetArraySize(final_at) > 0)
 	{
@@ -5227,6 +5507,12 @@ void announce_to_annc(oneM2MPrimitive *o2pt, RTNode *target_rtnode, cJSON *prev_
 
 	cJSON *resource = cJSON_CreateObject();
 
+	// announcementSyncType (ast) is an R4 attribute: never propagate it below R4
+	bool annc_ast = false;
+#if CSE_RVI >= RVI_4
+	annc_ast = (o2pt->rvi >= RVI_4);
+#endif
+
 	// (1) Mandatory-Announced attributes changed by this UPDATE -> new value.
 	// `upd_body` is the update request content captured before the resource
 	// handler consumed it.
@@ -5234,6 +5520,7 @@ void announce_to_annc(oneM2MPrimitive *o2pt, RTNode *target_rtnode, cJSON *prev_
 	{
 		if (!it->string) continue;
 		if (!annc_attr_is_ma(ty, it->string)) continue;
+		if (!annc_ast && !strcmp(it->string, "ast")) continue;
 		if ((v = cJSON_GetObjectItem(src, it->string)))
 			cJSON_AddItemToObject(resource, it->string, cJSON_Duplicate(v, true));
 		else if (cJSON_IsNull(it))
@@ -5517,7 +5804,8 @@ bool isValidChildType(ResourceType parent, ResourceType child)
 		if (child == RT_ACP || child == RT_AE || child == RT_CNT || child == RT_GRP || child == RT_SUB ||
 			child == RT_CSR || child == RT_NOD || child == RT_MGMTOBJ || child == RT_CBA || child == RT_FCNT ||
 			// announced resources may be created directly under <CSEBase> (TS-0001 §9.6.3)
-			child == RT_AEA || child == RT_CNTA || child == RT_GRPA || child == RT_ACPA || child == RT_TSA || child == RT_FCNTA)
+			child == RT_AEA || child == RT_CNTA || child == RT_GRPA || child == RT_ACPA || child == RT_TSA || child == RT_FCNTA ||
+			child == RT_CSRA)
 			return true;
 		break;
 	case RT_GRP:
@@ -5526,7 +5814,8 @@ bool isValidChildType(ResourceType parent, ResourceType child)
 		break;
 	case RT_CSR:
 		if (child == RT_CNT || child == RT_CNTA || child == RT_FCNT || child == RT_GRP || child == RT_GRPA || child == RT_ACP ||
-			child == RT_ACPA || child == RT_AE || child == RT_SUB || child == RT_AEA)
+			child == RT_ACPA || child == RT_AE || child == RT_SUB || child == RT_AEA ||
+			child == RT_TS || child == RT_TSA || child == RT_FCNTA)
 			return true;
 		break;
 	case RT_SUB:
@@ -5550,6 +5839,13 @@ bool isValidChildType(ResourceType parent, ResourceType child)
 			return true;
 		break;
 	case RT_CBA:
+		if (child == RT_SUB || child == RT_AEA || child == RT_CNTA || child == RT_GRPA ||
+			child == RT_ACPA || child == RT_TSA || child == RT_FCNTA ||
+			// non-announced children are also tolerated (legacy)
+			child == RT_CNT || child == RT_GRP || child == RT_ACP)
+			return true;
+		break;
+	case RT_CSRA:
 		if (child == RT_SUB || child == RT_AEA || child == RT_CNTA || child == RT_GRPA ||
 			child == RT_ACPA || child == RT_TSA || child == RT_FCNTA ||
 			// non-announced children are also tolerated (legacy)
@@ -5818,9 +6114,7 @@ int validate_fcnt(oneM2MPrimitive *o2pt, cJSON *fcnt, Operation op)
 		}
 	}
 
-#if CSE_RVI >= RVI_3
 	validate_aa(o2pt, fcnt, RT_FCNT);
-#endif
 
 	return RSC_OK;
 }

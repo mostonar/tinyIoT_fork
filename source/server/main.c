@@ -105,6 +105,8 @@ static const char *FCNT_ANNC_OA[]= { "daci", "loc", "or", "nl", "mni", "mia", "m
                                      "cni", "cbs", NULL };
 static const char *CSE_ANNC_MA[] = { "acpi", "lbl", "srv", NULL };   // et synthesised in create_remote_cba
 static const char *CSE_ANNC_OA[] = { NULL };
+static const char *CSR_ANNC_MA[] = { "et", "acpi", "lbl", "csi", NULL };
+static const char *CSR_ANNC_OA[] = { "cst", "poa", "cb", "rr", "nl", "csz", "srv", "dcse", "mei", "tri", NULL };
 
 const AnncAttrDef ANNC_ATTR_TABLE[] = {
 	{ RT_AE,   AE_ANNC_MA,   AE_ANNC_OA   },
@@ -115,6 +117,7 @@ const AnncAttrDef ANNC_ATTR_TABLE[] = {
 	{ RT_TS,   TS_ANNC_MA,   TS_ANNC_OA   },
 	{ RT_FCNT, FCNT_ANNC_MA, FCNT_ANNC_OA },
 	{ RT_CSE,  CSE_ANNC_MA,  CSE_ANNC_OA  },
+	{ RT_CSR,  CSR_ANNC_MA,  CSR_ANNC_OA  },
 	{ RT_MIXED, NULL, NULL },
 };
 
@@ -192,10 +195,11 @@ int main(int argc, char **argv)
 		\"m2m:acp\": {\"pv\":{\"acr\":[{\"acor\":[\"\"],\"acop\":0, \"acco\":[{\"acip\":{\"ipv4\":[\"\"], \"ipv6\":[\"\"]}}]}]}, \"pvs\":{\"acr\":[{\"acor\":[\"\"],\"acop\":0, \"acco\":[{\"acip\":{\"ipv4\":[\"\"], \"ipv6\":[\"\"]}}]}]}, \"at\":[\"\"], \"aa\":[\"\"], \"ast\":0}, \
 		\"m2m:sub\": {\"enc\":{\"net\":[1], \"atr\":[\"\"], \"chty\":[0], \"md\":{\"num\":0, \"dur\":\"\"} }, \"exc\":0, \"nu\":[\"\"], \"gpi\":0, \"nfu\":0, \"bn\":0, \"rl\":0, \"sur\":0, \"nct\":0, \"cr\":\"\", \"su\":\"\"},\
 		\"m2m:grp\": {\"gn\": \"\", \"cr\":\"\", \"mt\":0, \"cnm\":0, \"mnm\":0, \"mid\":[\"\"], \"macp\":[\"\"], \"mtv\":true, \"csy\":0, \"at\":[\"\"], \"aa\":[\"\"], \"ast\":0},\
-		\"m2m:csr\": {\"cst\":0, \"poa\":[\"\"], \"cb\":\"\", \"dcse\":[\"\"], \"csi\":\"\", \"mei\":\"\", \"tri\":\"\", \"csz\":[\"\"], \"rr\":true, \"nl\":\"\", \"srv\":[\"\"], \"spi\":\"\"},\
+		\"m2m:csr\": {\"cst\":0, \"poa\":[\"\"], \"cb\":\"\", \"dcse\":[\"\"], \"csi\":\"\", \"mei\":\"\", \"tri\":\"\", \"csz\":[\"\"], \"rr\":true, \"nl\":\"\", \"srv\":[\"\"], \"spi\":\"\", \"at\":[\"\"], \"aa\":[\"\"]},\
 		\"m2m:cb\": {\"cst\":0, \"csi\":\"\", \"srt\":[\"\"], \"rr\":true, \"poa\":[\"\"], \"srv\":[0], \"at\":[], \"aa\":[],\"ast\":0, \"spi\":\"//" CSE_BASE_SP_ID "\"}, \
 		\"m2m:acpA\": {\"lnk\":\"\", \"pv\":{\"acr\":[{\"acor\":[\"\"],\"acop\":0, \"acco\":[{\"acip\":{\"ipv4\":[\"\"], \"ipv6\":[\"\"]}}]}]}, \"pvs\":{\"acr\":[{\"acor\":[\"\"],\"acop\":0, \"acco\":[{\"acip\":{\"ipv4\":[\"\"], \"ipv6\":[\"\"]}}]}]}, \"ast\":0}, \
 		\"m2m:cbA\": {\"lnk\":\"\", \"cst\":0, \"csi\":\"\", \"srt\":[\"\"], \"poa\":[\"\"], \"srv\":[\"\"], \"rr\":true, \"ast\":0}, \
+		\"m2m:csrA\": {\"lnk\":\"\", \"cst\":0, \"poa\":[\"\"], \"cb\":\"\", \"csi\":\"\", \"mei\":\"\", \"tri\":\"\", \"rr\":true, \"nl\":\"\", \"csz\":[\"\"], \"srv\":[\"\"], \"dcse\":[\"\"], \"ast\":0}, \
 		\"m2m:aeA\": {\"lnk\":\"\", \"api\":\"\", \"aei\":\"\", \"rr\":true, \"poa\":[\"\"], \"apn\":\"\", \"srv\":[\"\"], \"ast\":0}, \
 		\"m2m:cntA\": {\"lnk\":\"\", \"cr\":\"\", \"mni\":0, \"mbs\":0, \"st\":0, \"cni\":0, \"cbs\":0, \"ast\":0}, \
 		\"m2m:grpA\": {\"lnk\":\"\", \"cr\":\"\", \"mt\":0, \"cnm\":0, \"mnm\":0, \"mid\":[\"\"], \"macp\":[\"\"], \"mtv\":true, \"csy\":0, \"gn\":\"\", \"at\":[\"\"], \"aa\":[\"\"], \"ast\":0}, \

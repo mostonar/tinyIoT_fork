@@ -58,9 +58,8 @@ int create_cin(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
             return o2pt->rsc;
         }
     }
-#if CSE_RVI >= RVI_3
     cJSON *final_at = cJSON_CreateArray();
-    if (handle_annc_create(parent_rtnode, cin, cJSON_GetObjectItem(cin, "at"), final_at) == -1)
+    if (handle_annc_create(o2pt, parent_rtnode, cin, cJSON_GetObjectItem(cin, "at"), final_at) == -1)
     {
         cJSON_Delete(root);
         cJSON_Delete(final_at);
@@ -77,7 +76,6 @@ int create_cin(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         cJSON_Delete(final_at);
         cJSON_DeleteItemFromObject(cin, "at");
     }
-#endif
 
     RTNode *cin_rtnode = create_rtnode(cin, RT_CIN);
     if (!db_begin_tx())
@@ -227,9 +225,7 @@ int validate_cin(oneM2MPrimitive *o2pt, cJSON *parent_cnt, cJSON *cin, Operation
             return handle_error(o2pt, RSC_BAD_REQUEST, "attribute `cnf` is invalid");
         }
     }
-#if CSE_RVI >= RVI_3
     validate_aa(o2pt, cin, RT_CIN);
-#endif
 
     return RSC_OK;
 }

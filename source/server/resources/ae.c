@@ -66,9 +66,8 @@ int create_ae(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
                 cJSON_AddItemToArray(ae_at, cJSON_CreateString(reg_csi->valuestring));
         }
     }
-#if CSE_RVI >= RVI_3
     cJSON *final_at = cJSON_CreateArray();
-    if (handle_annc_create(parent_rtnode, ae, cJSON_GetObjectItem(ae, "at"), final_at) == -1)
+    if (handle_annc_create(o2pt, parent_rtnode, ae, cJSON_GetObjectItem(ae, "at"), final_at) == -1)
     {
         cJSON_Delete(root);
         cJSON_Delete(final_at);
@@ -85,7 +84,6 @@ int create_ae(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         cJSON_Delete(final_at);
         cJSON_DeleteItemFromObject(ae, "at");
     }
-#endif
 
     // Add uri attribute
     char *ptr = malloc(1024);
@@ -148,7 +146,7 @@ int update_ae(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
         logger("O2", LOG_LEVEL_ERROR, "validation failed");
         return result;
     }
-    process_annc_at_update(target_rtnode, m2m_ae);
+    process_annc_at_update(o2pt, target_rtnode, m2m_ae);
     cJSON_AddItemToObject(m2m_ae, "lt", cJSON_CreateString(get_local_time(0)));
 
     // merge update resource

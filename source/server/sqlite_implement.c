@@ -125,6 +125,7 @@ static const table_def_t table_definitions[] = {
      "CREATE TABLE IF NOT EXISTS csr ( id INTEGER, "
      "cst INT, poa VARCHAR(200), cb VARCHAR(200), csi VARCHAR(200), mei VARCHAR(45), "
      "tri VARCHAR(45), rr INT, nl VARCHAR(45), srv VARCHAR(45), dcse VARCHAR(200), csz VARCHAR(100), "
+     "spi VARCHAR(45), at VARCHAR(200), aa VARCHAR(100), "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"ae", 
@@ -160,6 +161,7 @@ static const table_def_t table_definitions[] = {
     {"cb", 
      "CREATE TABLE IF NOT EXISTS cb ( id INTEGER, "
      "cst INT, csi VARCHAR(45), srt VARCHAR(100), poa VARCHAR(200), nl VARCHAR(45), ncp VARCHAR(45), srv VARCHAR(45), rr INT, at VARCHAR(200), aa VARCHAR(100), ast INT, "
+     "spi VARCHAR(45), "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"acpA",
@@ -171,6 +173,12 @@ static const table_def_t table_definitions[] = {
      "CREATE TABLE IF NOT EXISTS cbA ( id INTEGER, "
      "cst INT, lnk VARCHAR(100), csi VARCHAR(45), srt VARCHAR(100), poa VARCHAR(200), nl VARCHAR(45), ncp VARCHAR(45), srv VARCHAR(45), rr INT, "
      "at VARCHAR(200), aa VARCHAR(100), ast INT, "
+     "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
+    },
+    {"csrA",
+     "CREATE TABLE IF NOT EXISTS csrA ( id INTEGER, "
+     "cst INT, lnk VARCHAR(100), poa VARCHAR(200), cb VARCHAR(200), csi VARCHAR(200), mei VARCHAR(45), "
+     "tri VARCHAR(45), rr INT, nl VARCHAR(45), csz VARCHAR(100), srv VARCHAR(45), dcse VARCHAR(200), ast INT, "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"aeA", 
@@ -379,6 +387,9 @@ char *get_table_name(ResourceType ty)
         break;
     case RT_CBA:
         tableName = "cbA";
+        break;
+    case RT_CSRA:
+        tableName = "csrA";
         break;
     case RT_CNTA:
         tableName = "cntA";

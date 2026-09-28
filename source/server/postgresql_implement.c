@@ -222,6 +222,7 @@ static const table_def_t table_definitions[] = {
      "cst INT, poa VARCHAR(200), cb VARCHAR(200), csi VARCHAR(200), mei VARCHAR(45), "
      "tri VARCHAR(45), rr INT, nl VARCHAR(45), srv VARCHAR(45), dcse VARCHAR(200), csz VARCHAR(100), "
      "spi VARCHAR(45), "
+     "at VARCHAR(200), aa VARCHAR(100), "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"ae", 
@@ -269,6 +270,12 @@ static const table_def_t table_definitions[] = {
      "CREATE TABLE IF NOT EXISTS cbA ( id INTEGER, "
      "cst INT, lnk VARCHAR(100), csi VARCHAR(45), srt VARCHAR(100), poa VARCHAR(200), nl VARCHAR(45), ncp VARCHAR(45), srv VARCHAR(45), rr INT, "
      "at VARCHAR(200), aa VARCHAR(100), ast INT, "
+     "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
+    },
+    {"csrA",
+     "CREATE TABLE IF NOT EXISTS csrA ( id INTEGER, "
+     "cst INT, lnk VARCHAR(100), poa VARCHAR(200), cb VARCHAR(200), csi VARCHAR(200), mei VARCHAR(45), "
+     "tri VARCHAR(45), rr INT, nl VARCHAR(45), csz VARCHAR(100), srv VARCHAR(45), dcse VARCHAR(200), ast INT, "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"aeA", 
@@ -337,6 +344,7 @@ static const table_def_t table_definitions[] = {
      "cst INT, poa TEXT, cb TEXT, csi TEXT, mei TEXT, "
      "tri TEXT, rr INT, nl TEXT, srv TEXT, dcse TEXT, csz TEXT, "
      "spi TEXT, "
+     "at TEXT, aa TEXT, "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"ae", 
@@ -384,6 +392,12 @@ static const table_def_t table_definitions[] = {
      "CREATE TABLE IF NOT EXISTS cbA ( id INTEGER, "
      "cst INT, lnk TEXT, csi TEXT, srt TEXT, poa TEXT, nl TEXT, ncp TEXT, srv TEXT, rr INT, "
      "at TEXT, aa TEXT, ast INT, "
+     "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
+    },
+    {"csrA",
+     "CREATE TABLE IF NOT EXISTS csrA ( id INTEGER, "
+     "cst INT, lnk TEXT, poa TEXT, cb TEXT, csi TEXT, mei TEXT, "
+     "tri TEXT, rr INT, nl TEXT, csz TEXT, srv TEXT, dcse TEXT, ast INT, "
      "CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES general(id) ON DELETE CASCADE );"
     },
     {"aeA", 
@@ -624,6 +638,9 @@ char *get_table_name(ResourceType ty)
         break;
     case RT_CBA:
         tableName = "cbA";
+        break;
+    case RT_CSRA:
+        tableName = "csrA";
         break;
     case RT_CNTA:
         tableName = "cntA";
@@ -1825,6 +1842,7 @@ static const ResFcMap RES_FC_MAP[] = {
     {"lnk", RT_CNTA, "lnk", FC_OP_EQ},
     {"lnk", RT_CINA, "lnk", FC_OP_EQ},
     {"lnk", RT_CBA, "lnk", FC_OP_EQ},
+    {"lnk", RT_CSRA, "lnk", FC_OP_EQ},
     {"lnk", RT_GRPA, "lnk", FC_OP_EQ},
     {"lnk", RT_FCNTA, "lnk", FC_OP_EQ},
     {"lnk", RT_TSA, "lnk", FC_OP_EQ},

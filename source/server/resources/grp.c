@@ -40,9 +40,8 @@ int create_grp(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         }
     }
 
-#if CSE_RVI >= RVI_3
     cJSON *final_at = cJSON_CreateArray();
-    if (handle_annc_create(parent_rtnode, grp, cJSON_GetObjectItem(grp, "at"), final_at) == -1)
+    if (handle_annc_create(o2pt, parent_rtnode, grp, cJSON_GetObjectItem(grp, "at"), final_at) == -1)
     {
         cJSON_Delete(root);
         cJSON_Delete(final_at);
@@ -59,7 +58,6 @@ int create_grp(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         cJSON_Delete(final_at);
         cJSON_DeleteItemFromObject(grp, "at");
     }
-#endif
 
     cJSON_AddItemToObject(grp, "cnm", cJSON_CreateNumber(cJSON_GetArraySize(cJSON_GetObjectItem(grp, "mid"))));
 
@@ -116,9 +114,7 @@ int update_grp(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
         return rsc;
     }
 
-#if CSE_RVI >= RVI_3
-    process_annc_at_update(target_rtnode, m2m_grp);
-#endif
+    process_annc_at_update(o2pt, target_rtnode, m2m_grp);
 
     if ((pjson = cJSON_GetObjectItem(m2m_grp, "mid")))
     {
@@ -285,9 +281,7 @@ int validate_grp(oneM2MPrimitive *o2pt, cJSON *grp)
     cJSON_DeleteItemFromObject(grp, "mid");
     cJSON_AddItemToObject(grp, "mid", final_mid);
 
-#if CSE_RVI >= RVI_3
     validate_aa(o2pt, grp, RT_GRP);
-#endif
     return RSC_OK;
 }
 
@@ -612,9 +606,7 @@ int validate_grp_update(oneM2MPrimitive *o2pt, cJSON *grp_old, cJSON *grp_new)
         }
     }
 
-#if CSE_RVI >= RVI_3
     validate_aa(o2pt, grp_new, RT_GRP);
-#endif
     return RSC_OK;
 }
 

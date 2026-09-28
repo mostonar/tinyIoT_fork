@@ -108,7 +108,7 @@ source/server/
 - **Registration**: AE registration and remoteCSE registration for MN-CSE deployments
 - **CSE types**: Infrastructure Node CSE (IN-CSE) and Middle Node CSE (MN-CSE)
 - **Resources**: cseBase, ACP, AE, CNT, CIN, SUB, FCNT, FCIN, TS, TSI, GRP, and CSR
-- **Announced resources**: cbA, acpA, aeA, cntA, cinA, grpA, fcntA, and tsA
+- **Announced resources**: cbA, csrA, acpA, aeA, cntA, cinA, grpA, fcntA, and tsA
 - **Resource operations**: Create, Retrieve, Update, and Delete subject to the lifecycle rules of each resource type
 - **Access control**: ACP pv/pvs, acpi, originator and ACOP evaluation, group macp
 - **Subscription and notification**: notification URI verification, subscription updates, resource and direct-child event notifications, and subscription deletion notifications

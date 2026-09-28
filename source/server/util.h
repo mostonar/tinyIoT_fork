@@ -50,13 +50,16 @@ void add_subs(RTNode* parent, RTNode* sub);
 void detach_subs(RTNode* parent, RTNode* sub);
 
 // Announcement
-int handle_annc_create(RTNode* parent_rtnode, cJSON* resource_obj, cJSON* at_obj, cJSON* final_at);
-int handle_annc_update(RTNode* target_rtnode, cJSON* at_obj, cJSON* final_at);
-void process_annc_at_update(RTNode* target_rtnode, cJSON* body);
+int handle_annc_create(oneM2MPrimitive* o2pt, RTNode* parent_rtnode, cJSON* resource_obj, cJSON* at_obj, cJSON* final_at);
+int handle_annc_update(oneM2MPrimitive* o2pt, RTNode* target_rtnode, cJSON* at_obj, cJSON* final_at);
+void process_annc_at_update(oneM2MPrimitive* o2pt, RTNode* target_rtnode, cJSON* body);
 int build_annc_attrs(cJSON* dst, cJSON* src, ResourceType ty);
 void validate_aa(oneM2MPrimitive* o2pt, cJSON* resource, ResourceType ty);
 void announce_to_annc(oneM2MPrimitive* o2pt, RTNode* target_rtnode, cJSON* prev_aa, cJSON* upd_body);
 int create_remote_cba(char* poa, char** cbA_url);
+char* discover_ri_by_lnk(RTNode* csr, const char* parent_uri, ResourceType ty, const char* lnk_value);
+int create_remote_csra(char* target_csi, char** csrA_url);
+cJSON* discover_resource_by_attr(RTNode* csr, const char* parent_uri, ResourceType ty, const char* attr, const char* value, bool use_filter);
 int deregister_remote_cba(char* cbA_url);
 int deregister_remote_annc(RTNode* target_rtnode, cJSON* delete_at_list, cJSON* keep_out);
 void removeChildAnnc(RTNode* rtnode, char* at);

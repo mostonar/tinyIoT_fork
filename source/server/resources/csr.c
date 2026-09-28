@@ -75,6 +75,25 @@ int create_csr(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         return rsc;
     }
 
+    cJSON *final_at = cJSON_CreateArray();
+    if (handle_annc_create(o2pt, parent_rtnode, csr, cJSON_GetObjectItem(csr, "at"), final_at) == -1)
+    {
+        cJSON_Delete(root);
+        cJSON_Delete(final_at);
+        return handle_error(o2pt, RSC_BAD_REQUEST, "invalid attribute in `aa`");
+    }
+
+    if (cJSON_GetArraySize(final_at) > 0)
+    {
+        cJSON_DeleteItemFromObject(csr, "at");
+        cJSON_AddItemToObject(csr, "at", final_at);
+    }
+    else
+    {
+        cJSON_Delete(final_at);
+        cJSON_DeleteItemFromObject(csr, "at");
+    }
+
     o2pt->rsc = RSC_CREATED;
 
     // Add uri attribute
@@ -139,6 +158,8 @@ int update_csr(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
     {
         return result;
     }
+
+    process_annc_at_update(o2pt, target_rtnode, m2m_csr);
 
     cJSON_AddItemToObject(m2m_csr, "lt", cJSON_CreateString(get_local_time(0)));
 

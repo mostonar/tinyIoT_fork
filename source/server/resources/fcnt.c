@@ -146,7 +146,6 @@ int create_fcnt(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
 		}
 	}
 
-#if CSE_RVI >= RVI_3
 	bool parent_was_announced = false;
 	cJSON *final_at = cJSON_CreateArray();
 
@@ -161,7 +160,7 @@ int create_fcnt(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
 
 	if (parent_was_announced)
 	{
-		if (handle_annc_create(parent_rtnode, fcnt, cJSON_GetObjectItem(fcnt, "at"), final_at) == -1)
+		if (handle_annc_create(o2pt, parent_rtnode, fcnt, cJSON_GetObjectItem(fcnt, "at"), final_at) == -1)
 		{
 			if (customAttrs) cJSON_Delete(customAttrs);
 			cJSON_Delete(root);
@@ -186,7 +185,7 @@ int create_fcnt(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
 	}
 	else
 	{
-		if (handle_annc_create(parent_rtnode->parent, fcnt, cJSON_GetObjectItem(fcnt, "at"), final_at) == -1)
+		if (handle_annc_create(o2pt, parent_rtnode->parent, fcnt, cJSON_GetObjectItem(fcnt, "at"), final_at) == -1)
 		{
 			if (customAttrs) cJSON_Delete(customAttrs);
 			cJSON_Delete(root);
@@ -209,7 +208,6 @@ int create_fcnt(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
 			cJSON_DeleteItemFromObject(fcnt, "at");
 		}
 	}
-#endif
 
 	cJSON_AddNumberToObject(fcnt, "st", 0);
 
@@ -437,7 +435,7 @@ int update_fcnt(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
 		return result;
 	}
 
-	process_annc_at_update(target_rtnode, m2m_fcnt);
+	process_annc_at_update(o2pt, target_rtnode, m2m_fcnt);
 
 	char *lt = get_local_time(0);
 	cJSON_AddItemToObject(m2m_fcnt, "lt", cJSON_CreateString(lt));

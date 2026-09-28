@@ -59,13 +59,12 @@ int create_acp(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         return rsc;
     }
 
-#if CSE_RVI >= RVI_3
     cJSON *final_at = cJSON_CreateArray();
     cJSON *at = NULL;
     char *at_str = NULL;
     cJSON_ArrayForEach(at, cJSON_GetObjectItem(acp, "at"))
     {
-        at_str = create_remote_annc(parent_rtnode, acp, at->valuestring);
+        at_str = create_remote_annc(o2pt, parent_rtnode, acp, at->valuestring);
         if (!at_str)
         {
             continue;
@@ -84,7 +83,6 @@ int create_acp(oneM2MPrimitive *o2pt, RTNode *parent_rtnode)
         cJSON_Delete(final_at);
         cJSON_DeleteItemFromObject(acp, "at");
     }
-#endif
     // Add uri attribute
     char *ptr = malloc(1024);
     cJSON *rn = cJSON_GetObjectItem(acp, "rn");
@@ -138,7 +136,7 @@ int update_acp(oneM2MPrimitive *o2pt, RTNode *target_rtnode)
     cJSON *acp = target_rtnode->obj;
     cJSON *pjson = NULL;
 
-    process_annc_at_update(target_rtnode, m2m_acp);
+    process_annc_at_update(o2pt, target_rtnode, m2m_acp);
     cJSON_AddItemToObject(m2m_acp, "lt", cJSON_CreateString(get_local_time(0)));
 
     update_resource(target_rtnode->obj, m2m_acp);
@@ -224,9 +222,7 @@ int validate_acp(oneM2MPrimitive *o2pt, cJSON *acp, Operation op)
         }
     }
 
-#if CSE_RVI >= RVI_3
     validate_aa(o2pt, acp, RT_ACP);
-#endif
 
     return RSC_OK;
 }
