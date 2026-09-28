@@ -1596,12 +1596,13 @@ RTNode* resolve_acpi(char* acpi, bool* is_remote)
 		return NULL;
 
 	char* addr = acpi;
-	if (checkResourceAddressingType(acpi) == ABSOLUTE)
+	if (checkResourceAddressingType(acpi) == ABSOLUTE && isSPIDLocal(acpi))
 	{
-		// only our own SP is reachable; "//<SP-ID>/<CSE-ID>/..." -> "/<CSE-ID>/..."
-		if (!isSPIDLocal(acpi) || !(addr = strchr(acpi + 2, '/')))
+		// within our SP: "//<SP-ID>/<CSE-ID>/..." -> "/<CSE-ID>/..."
+		if (!(addr = strchr(acpi + 2, '/')))
 			return NULL;
 	}
+	// another SP's absolute address stays as is and is routed like any remote one
 
 	if (addr[0] != '/')
 		return find_rtnode(addr);
