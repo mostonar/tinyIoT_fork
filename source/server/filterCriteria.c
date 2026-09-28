@@ -330,40 +330,60 @@ bool parse_qs(cJSON *qs){
     return true;
 }
 
-char *fc_to_qs(cJSON *fc){
-    char *qs = NULL;
-    char *key = NULL;
-    char *value = NULL;
-    cJSON *pjson = NULL, *ptr = NULL;
-    cJSON *fc_copy = fc;
-    pjson = fc_copy->child;
-
-    qs = (char *)calloc(256, sizeof(char));
-    while(pjson != NULL){
-        key = pjson->string;
-        strcat(qs, key);
-        if(cJSON_IsArray(pjson)){
-            strcat(qs, "=");
-            value = cJSON_PrintUnformatted(pjson);
-            strcat(qs, value);
-            free(value);
-        }
-        else if(cJSON_IsNumber(pjson)){
-            strcat(qs, "=");
-            value = cJSON_PrintUnformatted(pjson);
-            strcat(qs, value);
-            free(value);
-        }
-        else if(cJSON_IsString(pjson)){
-            strcat(qs, "=");
-            value = cJSON_PrintUnformatted(pjson);
-            strcat(qs, value);
-            free(value);
-        }
-        strcat(qs, "&");
-        pjson = pjson->next;
+/* append `s` to the growing query string, percent-encoding everything but RFC 3986 unreserved characters */
+static void qs_append(char **qs, size_t *len, size_t *cap, const char *s, bool encode)
+{
+    size_t need = *len + strlen(s) * 3 + 2;
+    if (need > *cap) {
+        while (*cap < need)
+            *cap *= 2;
+        *qs = realloc(*qs, *cap);
     }
-    qs[strlen(qs) - 1] = '\0';
+    for (; *s; s++) {
+        if (!encode || isalnum((unsigned char)*s) || strchr("-._~", *s))
+            (*qs)[(*len)++] = *s;
+        else
+            *len += sprintf(*qs + *len, "%%%02X", (unsigned char)*s);
+    }
+    (*qs)[*len] = '\0';
+}
+
+/* append "key=value&" for one scalar filter value */
+static void qs_append_pair(char **qs, size_t *len, size_t *cap, const char *key, cJSON *val)
+{
+    char num[32];
+    if (cJSON_IsNumber(val)) {
+        snprintf(num, sizeof(num), "%.0f", val->valuedouble);
+        qs_append(qs, len, cap, key, false);
+        qs_append(qs, len, cap, "=", false);
+        qs_append(qs, len, cap, num, false);
+    } else if (cJSON_IsString(val) && val->valuestring) {
+        qs_append(qs, len, cap, key, false);
+        qs_append(qs, len, cap, "=", false);
+        qs_append(qs, len, cap, val->valuestring, true);
+    } else {
+        return;
+    }
+    qs_append(qs, len, cap, "&", false);
+}
+
+char *fc_to_qs(cJSON *fc){
+    size_t len = 0, cap = 256;
+    char *qs = calloc(cap, sizeof(char));
+
+    for (cJSON *pjson = fc->child; pjson != NULL; pjson = pjson->next) {
+        if (cJSON_IsArray(pjson)) {
+            // Multi-valued filter criteria (e.g. ty=[3,16]) go on the wire as
+            // repeated "key=value&key=value2" pairs, not as a literal JSON array.
+            cJSON *item = NULL;
+            cJSON_ArrayForEach(item, pjson)
+                qs_append_pair(&qs, &len, &cap, pjson->string, item);
+        } else {
+            qs_append_pair(&qs, &len, &cap, pjson->string, pjson);
+        }
+    }
+    if (len > 0)
+        qs[len - 1] = '\0';
     return qs;
 }
 
